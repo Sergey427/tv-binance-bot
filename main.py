@@ -5,7 +5,7 @@ app = FastAPI()
 
 # Настройки Binance API (замени своими ключами позже)
 binance = ccxt.binance({
-    'apiKey': 'ТВОЙ_API_KEY',
+    'apiKey': 'ТОЙ_API_KEY',
     'secret': 'ТВОЙ_SECRET'
 })
 
