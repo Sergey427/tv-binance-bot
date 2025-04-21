@@ -61,6 +61,9 @@ def webhook():
     except Exception as e:
         logger.error(f'Error: {str(e)}')
         return jsonify({'error': str(e)}), 500
+@app.route('/get-ip', methods=['GET'])
+def get_ip():
+    return jsonify({'ip': request.remote_addr})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
