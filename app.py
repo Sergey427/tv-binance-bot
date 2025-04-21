@@ -5,6 +5,12 @@ from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 import ccxt
 
+# Создаём папку logs, если она не существует
+log_dir = 'logs'
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+
+# Настройка логирования
 logging.basicConfig(filename='logs/bot.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
