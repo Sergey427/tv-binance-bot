@@ -1,3 +1,4 @@
-fastapi
-uvicorn
-ccxt
+flask==2.3.3
+ccxt==4.4.75
+python-dotenv==1.0.0
+gunicorn==22.0.0
