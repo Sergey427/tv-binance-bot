@@ -11,9 +11,9 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 load_dotenv()
-BINANCE_API_KEY = os.getenv(5rtVvkdPFTEELRdcbR7w7s8FEGbWIvO5ulbwpvn5H1U3rm8ZBrejnMHlhizto5nv)
-BINANCE_SECRET_KEY = os.getenv(r8NbiZoh47oY9dmlbgd7shVTTCtSxLxcgG8PkVWdxCTIqp6GBF3c4p6DM4H6MkBc)
-PASSPHRASE = os.getenv(Stargrad.2025)
+BINANCE_API_KEY = os.getenv('BINANCE_API_KEY')
+BINANCE_SECRET_KEY = os.getenv('BINANCE_SECRET_KEY')
+PASSPHRASE = os.getenv('PASSPHRASE')
 
 exchange = ccxt.binance({'apiKey': BINANCE_API_KEY, 'secret': BINANCE_SECRET_KEY, 'enableRateLimit': True})
 
