@@ -62,7 +62,11 @@ def webhook():
             logger.info("Setting up futures order")
             # Устанавливаем рычаг (leverage)
             try:
+<<<<<<< HEAD
                 client.futures_change_leverage(symbol=market, leverage=5)
+=======
+                client.futures_change_leverage(symbol=market, leverage=50)
+>>>>>>> 2612da05df0c31eaa23c064275a528f1073cc122
                 logger.info(f"Leverage set to 50 for {market}")
             except Exception as e:
                 logger.error(f"Failed to set leverage: {str(e)}")
