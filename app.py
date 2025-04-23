@@ -63,7 +63,7 @@ def webhook():
             # Устанавливаем рычаг (leverage)
             try:
                 client.futures_change_leverage(symbol=market, leverage=75)
-                logger.info(f"Leverage set to 5 for {market}")
+                logger.info(f"Leverage set to 50 for {market}")
             except Exception as e:
                 logger.error(f"Failed to set leverage: {str(e)}")
                 return jsonify({'error': f'Failed to set leverage: {str(e)}'}), 500
