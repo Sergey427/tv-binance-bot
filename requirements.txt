@@ -1,5 +1,5 @@
 flask==2.3.3
 ccxt==4.4.75
-python-dotenv==1.0.0
 gunicorn==22.0.0
 python-binance==1.0.19
+requests==2.31.0
