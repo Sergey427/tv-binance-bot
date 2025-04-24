@@ -1,7 +1,7 @@
+
 import os
 from flask import Flask, request, jsonify
 from binance.client import Client
-import requests
 import logging
 
 app = Flask(__name__)
@@ -10,11 +10,6 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Инициализация Binance клиента
-api_key = os.getenv('BINANCE_API_KEY')
-api_secret = os.getenv('BINANCE_SECRET_KEY')
-client = Client(api_key, api_secret, tld='com', testnet=False)
-
 # Переменные для отслеживания состояния позиций
 long_position_open = False
 short_position_open = False
@@ -22,21 +17,31 @@ current_symbol = None
 
 @app.route('/')
 def home():
+    logger.info("Home route accessed")
     return jsonify({'status': 'Server is running'})
 
-@app.route('/get-outbound-ip')
-def get_outbound_ip():
-    try:
-        response = requests.get('https://api.ipify.org?format=json')
-        return jsonify(response.json())
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+# Временно закомментируем маршрут /get-outbound-ip
+# @app.route('/get-outbound-ip')
+# def get_outbound_ip():
+#     try:
+#         response = requests.get('https://api.ipify.org?format=json')
+#         return jsonify(response.json())
+#     except Exception as e:
+#         return jsonify({'error': str(e)}), 500
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     global long_position_open, short_position_open, current_symbol
     logger.info("Received webhook request")
     try:
+        # Инициализация Binance клиента внутри маршрута
+        api_key = os.getenv('BINANCE_API_KEY')
+        api_secret = os.getenv('BINANCE_SECRET_KEY')
+        if not api_key or not api_secret:
+            logger.error("BINANCE_API_KEY or BINANCE_SECRET_KEY not set")
+            return jsonify({'error': 'BINANCE_API_KEY or BINANCE_SECRET_KEY not set'}), 500
+        client = Client(api_key, api_secret, tld='com', testnet=False)
+
         # Проверяем, что запрос содержит JSON
         if not request.is_json:
             logger.warning("Request does not contain JSON")
@@ -79,17 +84,31 @@ def webhook():
                 logger.error(f"Failed to set leverage: {str(e)}")
                 return jsonify({'error': f'Failed to set leverage: {str(e)}'}), 500
 
-            # Проверяем минимальный объём для фьючерсов
+            # Проверяем минимальный объём и точность цены для фьючерсов
             try:
                 symbol_info = client.futures_exchange_info()
+                symbol_found = False
                 for symbol in symbol_info['symbols']:
                     if symbol['symbol'] == market:
-                        min_qty = float(symbol['quantityPrecision'])
+                        symbol_found = True
+                        # Получаем минимальный объём из фильтров
+                        for filt in symbol['filters']:
+                            if filt['filterType'] == 'LOT_SIZE':
+                                min_qty = float(filt['minQty'])
+                                break
+                        else:
+                            logger.error(f"LOT_SIZE filter not found for {market}")
+                            return jsonify({'error': f'LOT_SIZE filter not found for {market}'}), 500
+
                         if amount < min_qty:
                             logger.warning(f"Amount {amount} is below minimum quantity {min_qty} for {market}")
                             return jsonify({'error': f'Amount {amount} is below minimum quantity {min_qty}'}), 400
+
                         price_precision = symbol['pricePrecision']  # Точность цены
                         break
+                if not symbol_found:
+                    logger.error(f"Symbol {market} not found in futures exchange info")
+                    return jsonify({'error': f'Symbol {market} not found in futures exchange info'}), 400
             except Exception as e:
                 logger.error(f"Failed to check futures symbol info: {str(e)}")
                 return jsonify({'error': f'Failed to check futures symbol info: {str(e)}'}), 500
@@ -165,7 +184,10 @@ def webhook():
                 # Устанавливаем Trailing Stop, если указан
                 if trailing_stop:
                     try:
-                        callback_rate = float(trailing_stop)  # Процент для Trailing Stop
+                        callback_rate = float(trailing_stop)
+                        if not 0.1 <= callback_rate <= 5.0:
+                            logger.warning(f"Trailing Stop callback rate {callback_rate} is out of range (0.1-5.0)")
+                            return jsonify({'error': f'Trailing Stop callback rate {callback_rate} is out of range (0.1-5.0)'}), 400
                         ts_order = client.futures_create_order(
                             symbol=market,
                             side='SELL',
@@ -249,7 +271,10 @@ def webhook():
                 # Устанавливаем Trailing Stop, если указан
                 if trailing_stop:
                     try:
-                        callback_rate = float(trailing_stop)  # Процент для Trailing Stop
+                        callback_rate = float(trailing_stop)
+                        if not 0.1 <= callback_rate <= 5.0:
+                            logger.warning(f"Trailing Stop callback rate {callback_rate} is out of range (0.1-5.0)")
+                            return jsonify({'error': f'Trailing Stop callback rate {callback_rate} is out of range (0.1-5.0)'}), 400
                         ts_order = client.futures_create_order(
                             symbol=market,
                             side='BUY',
@@ -278,4 +303,5 @@ def webhook():
         return jsonify({'error': f'binance {str(e)}'}), 500
 
 if __name__ == '__main__':
+    logger.info("Starting Flask application")
     app.run(host='0.0.0.0', port=int(os.getenv('PORT', 10000)))
