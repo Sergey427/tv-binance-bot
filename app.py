@@ -27,6 +27,30 @@ def home():
     logger.info("Home route accessed")
     return jsonify({'status': 'Server is running'})
 
+# Функция для проверки открытых позиций
+def check_open_position(symbol, position_side):
+    try:
+        positions = client.futures_position_information(symbol=symbol)
+        for position in positions:
+            if position['positionSide'] == position_side and float(position['positionAmt']) != 0:
+                return True
+        return False
+    except Exception as e:
+        logger.error(f"Failed to check open position for {symbol}: {str(e)}")
+        return False
+
+# Функция для получения доступного баланса
+def get_futures_balance():
+    try:
+        balance_info = client.futures_account_balance()
+        for asset in balance_info:
+            if asset['asset'] == 'USDT':
+                return float(asset['availableBalance'])
+        return 0.0
+    except Exception as e:
+        logger.error(f"Failed to get futures balance: {str(e)}")
+        return 0.0
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     global long_position_open, short_position_open, current_symbol
@@ -63,6 +87,13 @@ def webhook():
         logger.info(f"Processing order: market={market}, side={side}, amount={amount}, order_type={order_type}, contract_type={contract_type}, bot_type={bot_type}, action={action}")
 
         if contract_type == 'futures':
+            # Проверяем баланс перед операцией
+            balance = get_futures_balance()
+            logger.info(f"Futures available balance: ${balance}")
+            if balance < 0.1:  # Минимальный порог для тестов
+                logger.warning(f"Insufficient balance: ${balance}")
+                return jsonify({'error': f'Insufficient balance: ${balance}'}), 400
+
             # Устанавливаем рычаг (leverage)
             try:
                 client.futures_change_leverage(symbol=market, leverage=50)
@@ -82,6 +113,7 @@ def webhook():
                         for filt in symbol['filters']:
                             if filt['filterType'] == 'LOT_SIZE':
                                 min_qty = float(filt['minQty'])
+                                logger.info(f"Minimal quantity (minQty) for {market}: {min_qty}")
                                 break
                         else:
                             logger.error(f"LOT_SIZE filter not found for {market}")
@@ -101,6 +133,11 @@ def webhook():
 
             # Логика для Longbot и Shortbot
             if bot_type == 'longbot' and side == 'buy' and action == 'open':
+                # Проверяем, есть ли уже открытая Long-позиция
+                if check_open_position(market, 'LONG'):
+                    logger.warning(f"Long position already open for {market}")
+                    return jsonify({'error': f'Long position already open for {market}'}), 400
+
                 # Longbot открывает Long-позицию
                 if short_position_open and current_symbol == market:
                     # Закрываем Short-позицию
@@ -135,7 +172,7 @@ def webhook():
 
             elif bot_type == 'longbot' and side == 'sell' and action == 'close':
                 # Longbot закрывает Long-позицию
-                if not long_position_open or current_symbol != market:
+                if not check_open_position(market, 'LONG'):
                     logger.warning("No Long position to close")
                     return jsonify({'error': 'No Long position to close'}), 400
 
@@ -153,6 +190,11 @@ def webhook():
                 logger.info(f"Long position closed: {order}")
 
             elif bot_type == 'shortbot' and side == 'sell' and action == 'open':
+                # Проверяем, есть ли уже открытая Short-позиция
+                if check_open_position(market, 'SHORT'):
+                    logger.warning(f"Short position already open for {market}")
+                    return jsonify({'error': f'Short position already open for {market}'}), 400
+
                 # Shortbot открывает Short-позицию
                 if long_position_open and current_symbol == market:
                     # Закрываем Long-позицию
@@ -187,7 +229,7 @@ def webhook():
 
             elif bot_type == 'shortbot' and side == 'buy' and action == 'close':
                 # Shortbot закрывает Short-позицию
-                if not short_position_open or current_symbol != market:
+                if not check_open_position(market, 'SHORT'):
                     logger.warning("No Short position to close")
                     return jsonify({'error': 'No Short position to close'}), 400
 
