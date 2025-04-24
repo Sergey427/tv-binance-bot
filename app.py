@@ -9,6 +9,23 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Инициализация Binance клиента
+api_key = os.getenv('BINANCE_API_KEY')
+api_secret = os.getenv('BINANCE_SECRET_KEY')
+if not api_key or not api_secret:
+    logger.error("BINANCE_API_KEY or BINANCE_SECRET_KEY not set")
+    raise EnvironmentError("BINANCE_API_KEY or BINANCE_SECRET_KEY not set")
+client = Client(api_key, api_secret, tld='com', testnet=False)
+
+# Переключаем на One-Way Mode
+try:
+    client.futures_change_position_mode(dualSidePosition=False)
+    logger.info("Successfully set to One-Way Mode")
+except Exception as e:
+    logger.error(f"Failed to set One-Way Mode: {str(e)}")
+    # Не прерываем выполнение, чтобы сервер мог продолжить работу
+    # Но ты должен проверить логи и убедиться, что режим переключён
+
 # Переменные для отслеживания состояния позиций
 long_position_open = False
 short_position_open = False
@@ -24,14 +41,6 @@ def webhook():
     global long_position_open, short_position_open, current_symbol
     logger.info("Received webhook request")
     try:
-        # Инициализация Binance клиента внутри маршрута
-        api_key = os.getenv('BINANCE_API_KEY')
-        api_secret = os.getenv('BINANCE_SECRET_KEY')
-        if not api_key or not api_secret:
-            logger.error("BINANCE_API_KEY or BINANCE_SECRET_KEY not set")
-            return jsonify({'error': 'BINANCE_API_KEY or BINANCE_SECRET_KEY not set'}), 500
-        client = Client(api_key, api_secret, tld='com', testnet=False)
-
         # Проверяем, что запрос содержит JSON
         if not request.is_json:
             logger.warning("Request does not contain JSON")
