@@ -19,15 +19,6 @@ def home():
     logger.info("Home route accessed")
     return jsonify({'status': 'Server is running'})
 
-# Временно закомментируем маршрут /get-outbound-ip
-# @app.route('/get-outbound-ip')
-# def get_outbound_ip():
-#     try:
-#         response = requests.get('https://api.ipify.org?format=json')
-#         return jsonify(response.json())
-#     except Exception as e:
-#         return jsonify({'error': str(e)}), 500
-
 @app.route('/webhook', methods=['POST'])
 def webhook():
     global long_position_open, short_position_open, current_symbol
@@ -121,7 +112,7 @@ def webhook():
                     try:
                         close_order = client.futures_create_order(
                             symbol=market,
-                            side='BUY',  # Покупаем, чтобы закрыть Short
+                            side='BUY',
                             type='MARKET',
                             quantity=amount,
                             reduceOnly=True
@@ -150,7 +141,7 @@ def webhook():
                         tp_price = round(float(take_profit), price_precision)
                         tp_order = client.futures_create_order(
                             symbol=market,
-                            side='SELL',  # Продаём, чтобы зафиксировать прибыль
+                            side='SELL',
                             type='TAKE_PROFIT',
                             quantity=amount,
                             price=tp_price,
@@ -168,7 +159,7 @@ def webhook():
                         sl_price = round(float(stop_loss), price_precision)
                         sl_order = client.futures_create_order(
                             symbol=market,
-                            side='SELL',  # Продаём, чтобы ограничить убытки
+                            side='SELL',
                             type='STOP',
                             quantity=amount,
                             price=sl_price,
@@ -200,6 +191,24 @@ def webhook():
                         logger.error(f"Failed to set Trailing Stop: {str(e)}")
                         return jsonify({'error': f'Failed to set Trailing Stop: {str(e)}'}), 500
 
+            elif bot_type == 'longbot' and side == 'sell' and action == 'close':
+                # Longbot закрывает Long-позицию
+                if not long_position_open or current_symbol != market:
+                    logger.warning("No Long position to close")
+                    return jsonify({'error': 'No Long position to close'}), 400
+
+                logger.info("Closing Long position")
+                order = client.futures_create_order(
+                    symbol=market,
+                    side='SELL',
+                    type='MARKET',
+                    quantity=amount,
+                    reduceOnly=True
+                )
+                long_position_open = False
+                current_symbol = None
+                logger.info(f"Long position closed: {order}")
+
             elif bot_type == 'shortbot' and side == 'sell' and action == 'open':
                 # Shortbot открывает Short-позицию
                 if long_position_open and current_symbol == market:
@@ -208,7 +217,7 @@ def webhook():
                     try:
                         close_order = client.futures_create_order(
                             symbol=market,
-                            side='SELL',  # Продаём, чтобы закрыть Long
+                            side='SELL',
                             type='MARKET',
                             quantity=amount,
                             reduceOnly=True
@@ -237,7 +246,7 @@ def webhook():
                         tp_price = round(float(take_profit), price_precision)
                         tp_order = client.futures_create_order(
                             symbol=market,
-                            side='BUY',  # Покупаем, чтобы зафиксировать прибыль
+                            side='BUY',
                             type='TAKE_PROFIT',
                             quantity=amount,
                             price=tp_price,
@@ -255,7 +264,7 @@ def webhook():
                         sl_price = round(float(stop_loss), price_precision)
                         sl_order = client.futures_create_order(
                             symbol=market,
-                            side='BUY',  # Покупаем, чтобы ограничить убытки
+                            side='BUY',
                             type='STOP',
                             quantity=amount,
                             price=sl_price,
@@ -286,6 +295,24 @@ def webhook():
                     except Exception as e:
                         logger.error(f"Failed to set Trailing Stop: {str(e)}")
                         return jsonify({'error': f'Failed to set Trailing Stop: {str(e)}'}), 500
+
+            elif bot_type == 'shortbot' and side == 'buy' and action == 'close':
+                # Shortbot закрывает Short-позицию
+                if not short_position_open or current_symbol != market:
+                    logger.warning("No Short position to close")
+                    return jsonify({'error': 'No Short position to close'}), 400
+
+                logger.info("Closing Short position")
+                order = client.futures_create_order(
+                    symbol=market,
+                    side='BUY',
+                    type='MARKET',
+                    quantity=amount,
+                    reduceOnly=True
+                )
+                short_position_open = False
+                current_symbol = None
+                logger.info(f"Short position closed: {order}")
 
             else:
                 logger.warning("Invalid bot_type, side, or action combination")
