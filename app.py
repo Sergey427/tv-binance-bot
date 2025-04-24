@@ -2,6 +2,10 @@ import os
 from flask import Flask, request, jsonify
 from binance.client import Client
 import logging
+from dotenv import load_dotenv
+
+# Загружаем переменные из .env
+load_dotenv()
 
 app = Flask(__name__)
 
