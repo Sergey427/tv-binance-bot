@@ -10,9 +10,15 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Инициализация Binance клиента
 api_key = os.getenv('BINANCE_API_KEY')
 api_secret = os.getenv('BINANCE_SECRET_KEY')
 client = Client(api_key, api_secret, tld='com', testnet=False)
+
+# Переменные для отслеживания состояния позиций
+long_position_open = False
+short_position_open = False
+current_symbol = None
 
 @app.route('/')
 def home():
@@ -28,6 +34,7 @@ def get_outbound_ip():
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
+    global long_position_open, short_position_open, current_symbol
     logger.info("Received webhook request")
     try:
         # Проверяем, что запрос содержит JSON
@@ -39,7 +46,7 @@ def webhook():
         logger.info(f"Received data: {data}")
 
         # Проверка обязательных полей
-        required_fields = ['passphrase', 'market', 'side', 'amount', 'order_type']
+        required_fields = ['passphrase', 'market', 'side', 'amount', 'order_type', 'bot_type', 'action']
         for field in required_fields:
             if field not in data:
                 logger.warning(f"Missing required field: {field}")
@@ -55,11 +62,15 @@ def webhook():
         amount = float(data['amount'])
         order_type = data['order_type']
         contract_type = data.get('contract_type', 'spot')
+        bot_type = data['bot_type']
+        action = data['action']
+        take_profit = data.get('take_profit')  # Опционально: цена для Take Profit
+        stop_loss = data.get('stop_loss')      # Опционально: цена для Stop Loss
+        trailing_stop = data.get('trailing_stop')  # Опционально: процент для Trailing Stop
 
-        logger.info(f"Processing order: market={market}, side={side}, amount={amount}, order_type={order_type}, contract_type={contract_type}")
+        logger.info(f"Processing order: market={market}, side={side}, amount={amount}, order_type={order_type}, contract_type={contract_type}, bot_type={bot_type}, action={action}, take_profit={take_profit}, stop_loss={stop_loss}, trailing_stop={trailing_stop}")
 
         if contract_type == 'futures':
-            logger.info("Setting up futures order")
             # Устанавливаем рычаг (leverage)
             try:
                 client.futures_change_leverage(symbol=market, leverage=50)
@@ -77,29 +88,191 @@ def webhook():
                         if amount < min_qty:
                             logger.warning(f"Amount {amount} is below minimum quantity {min_qty} for {market}")
                             return jsonify({'error': f'Amount {amount} is below minimum quantity {min_qty}'}), 400
+                        price_precision = symbol['pricePrecision']  # Точность цены
                         break
             except Exception as e:
                 logger.error(f"Failed to check futures symbol info: {str(e)}")
                 return jsonify({'error': f'Failed to check futures symbol info: {str(e)}'}), 500
 
-            # Создаём фьючерсный ордер
-            logger.info("Creating futures order")
-            order = client.futures_create_order(
-                symbol=market,
-                side=side.upper(),
-                type=order_type.upper(),
-                quantity=amount
-            )
+            # Логика для Longbot и Shortbot
+            if bot_type == 'longbot' and side == 'buy' and action == 'open':
+                # Longbot открывает Long-позицию
+                if short_position_open and current_symbol == market:
+                    # Закрываем Short-позицию
+                    logger.info("Closing Short position before opening Long")
+                    try:
+                        close_order = client.futures_create_order(
+                            symbol=market,
+                            side='BUY',  # Покупаем, чтобы закрыть Short
+                            type='MARKET',
+                            quantity=amount,
+                            reduceOnly=True
+                        )
+                        logger.info(f"Short position closed: {close_order}")
+                        short_position_open = False
+                    except Exception as e:
+                        logger.error(f"Failed to close Short position: {str(e)}")
+                        return jsonify({'error': f'Failed to close Short position: {str(e)}'}), 500
+
+                # Открываем Long-позицию
+                logger.info("Opening Long position")
+                order = client.futures_create_order(
+                    symbol=market,
+                    side='BUY',
+                    type='MARKET',
+                    quantity=amount
+                )
+                long_position_open = True
+                current_symbol = market
+                logger.info(f"Long position opened: {order}")
+
+                # Устанавливаем Take Profit, если указан
+                if take_profit:
+                    try:
+                        tp_price = round(float(take_profit), price_precision)
+                        tp_order = client.futures_create_order(
+                            symbol=market,
+                            side='SELL',  # Продаём, чтобы зафиксировать прибыль
+                            type='TAKE_PROFIT',
+                            quantity=amount,
+                            price=tp_price,
+                            stopPrice=tp_price,
+                            reduceOnly=True
+                        )
+                        logger.info(f"Take Profit set at {tp_price}: {tp_order}")
+                    except Exception as e:
+                        logger.error(f"Failed to set Take Profit: {str(e)}")
+                        return jsonify({'error': f'Failed to set Take Profit: {str(e)}'}), 500
+
+                # Устанавливаем Stop Loss, если указан
+                if stop_loss:
+                    try:
+                        sl_price = round(float(stop_loss), price_precision)
+                        sl_order = client.futures_create_order(
+                            symbol=market,
+                            side='SELL',  # Продаём, чтобы ограничить убытки
+                            type='STOP',
+                            quantity=amount,
+                            price=sl_price,
+                            stopPrice=sl_price,
+                            reduceOnly=True
+                        )
+                        logger.info(f"Stop Loss set at {sl_price}: {sl_order}")
+                    except Exception as e:
+                        logger.error(f"Failed to set Stop Loss: {str(e)}")
+                        return jsonify({'error': f'Failed to set Stop Loss: {str(e)}'}), 500
+
+                # Устанавливаем Trailing Stop, если указан
+                if trailing_stop:
+                    try:
+                        callback_rate = float(trailing_stop)  # Процент для Trailing Stop
+                        ts_order = client.futures_create_order(
+                            symbol=market,
+                            side='SELL',
+                            type='TRAILING_STOP_MARKET',
+                            quantity=amount,
+                            callbackRate=callback_rate,
+                            reduceOnly=True
+                        )
+                        logger.info(f"Trailing Stop set with callback rate {callback_rate}%: {ts_order}")
+                    except Exception as e:
+                        logger.error(f"Failed to set Trailing Stop: {str(e)}")
+                        return jsonify({'error': f'Failed to set Trailing Stop: {str(e)}'}), 500
+
+            elif bot_type == 'shortbot' and side == 'sell' and action == 'open':
+                # Shortbot открывает Short-позицию
+                if long_position_open and current_symbol == market:
+                    # Закрываем Long-позицию
+                    logger.info("Closing Long position before opening Short")
+                    try:
+                        close_order = client.futures_create_order(
+                            symbol=market,
+                            side='SELL',  # Продаём, чтобы закрыть Long
+                            type='MARKET',
+                            quantity=amount,
+                            reduceOnly=True
+                        )
+                        logger.info(f"Long position closed: {close_order}")
+                        long_position_open = False
+                    except Exception as e:
+                        logger.error(f"Failed to close Long position: {str(e)}")
+                        return jsonify({'error': f'Failed to close Long position: {str(e)}'}), 500
+
+                # Открываем Short-позицию
+                logger.info("Opening Short position")
+                order = client.futures_create_order(
+                    symbol=market,
+                    side='SELL',
+                    type='MARKET',
+                    quantity=amount
+                )
+                short_position_open = True
+                current_symbol = market
+                logger.info(f"Short position opened: {order}")
+
+                # Устанавливаем Take Profit, если указан
+                if take_profit:
+                    try:
+                        tp_price = round(float(take_profit), price_precision)
+                        tp_order = client.futures_create_order(
+                            symbol=market,
+                            side='BUY',  # Покупаем, чтобы зафиксировать прибыль
+                            type='TAKE_PROFIT',
+                            quantity=amount,
+                            price=tp_price,
+                            stopPrice=tp_price,
+                            reduceOnly=True
+                        )
+                        logger.info(f"Take Profit set at {tp_price}: {tp_order}")
+                    except Exception as e:
+                        logger.error(f"Failed to set Take Profit: {str(e)}")
+                        return jsonify({'error': f'Failed to set Take Profit: {str(e)}'}), 500
+
+                # Устанавливаем Stop Loss, если указан
+                if stop_loss:
+                    try:
+                        sl_price = round(float(stop_loss), price_precision)
+                        sl_order = client.futures_create_order(
+                            symbol=market,
+                            side='BUY',  # Покупаем, чтобы ограничить убытки
+                            type='STOP',
+                            quantity=amount,
+                            price=sl_price,
+                            stopPrice=sl_price,
+                            reduceOnly=True
+                        )
+                        logger.info(f"Stop Loss set at {sl_price}: {sl_order}")
+                    except Exception as e:
+                        logger.error(f"Failed to set Stop Loss: {str(e)}")
+                        return jsonify({'error': f'Failed to set Stop Loss: {str(e)}'}), 500
+
+                # Устанавливаем Trailing Stop, если указан
+                if trailing_stop:
+                    try:
+                        callback_rate = float(trailing_stop)  # Процент для Trailing Stop
+                        ts_order = client.futures_create_order(
+                            symbol=market,
+                            side='BUY',
+                            type='TRAILING_STOP_MARKET',
+                            quantity=amount,
+                            callbackRate=callback_rate,
+                            reduceOnly=True
+                        )
+                        logger.info(f"Trailing Stop set with callback rate {callback_rate}%: {ts_order}")
+                    except Exception as e:
+                        logger.error(f"Failed to set Trailing Stop: {str(e)}")
+                        return jsonify({'error': f'Failed to set Trailing Stop: {str(e)}'}), 500
+
+            else:
+                logger.warning("Invalid bot_type, side, or action combination")
+                return jsonify({'error': 'Invalid bot_type, side, or action combination'}), 400
+
+            return jsonify({'status': 'success', 'order': order})
+
         else:
-            logger.info("Creating spot order")
-            order = client.create_order(
-                symbol=market,
-                side=side.upper(),
-                type=order_type.upper(),
-                quantity=amount
-            )
-        logger.info(f"Order successful: {order}")
-        return jsonify({'status': 'success', 'order': order})
+            logger.warning("Spot trading not implemented")
+            return jsonify({'error': 'Spot trading not implemented'}), 400
+
     except Exception as e:
         logger.error(f"Error in webhook: {str(e)}", exc_info=True)
         return jsonify({'error': f'binance {str(e)}'}), 500
