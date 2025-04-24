@@ -27,13 +27,36 @@ def home():
     logger.info("Home route accessed")
     return jsonify({'status': 'Server is running'})
 
+# Функция для проверки режима позиций
+def check_hedge_mode():
+    try:
+        account_info = client.futures_account()
+        hedge_mode = account_info.get('dualSidePosition', False)
+        logger.info(f"Hedge Mode enabled: {hedge_mode}")
+        return hedge_mode
+    except Exception as e:
+        logger.error(f"Failed to check hedge mode: {str(e)}")
+        return False
+
 # Функция для проверки открытых позиций
 def check_open_position(symbol, position_side):
     try:
         positions = client.futures_position_information(symbol=symbol)
+        logger.info(f"Positions for {symbol}: {positions}")
         for position in positions:
-            if position['positionSide'] == position_side and float(position['positionAmt']) != 0:
+            logger.info(f"Checking position: symbol={position['symbol']}, positionSide={position['positionSide']}, positionAmt={position['positionAmt']}")
+            # Поддержка positionSide='BOTH'
+            effective_side = position['positionSide']
+            if effective_side == 'BOTH':
+                amt = float(position['positionAmt'])
+                if amt > 0 and position_side == 'LONG':
+                    effective_side = 'LONG'
+                elif amt < 0 and position_side == 'SHORT':
+                    effective_side = 'SHORT'
+            if effective_side == position_side and float(position['positionAmt']) != 0:
+                logger.info(f"Found open position: {position_side} for {symbol}")
                 return True
+        logger.info(f"No open {position_side} position found for {symbol}")
         return False
     except Exception as e:
         logger.error(f"Failed to check open position for {symbol}: {str(e)}")
@@ -93,6 +116,11 @@ def webhook():
             if balance < 0.1:  # Минимальный порог для тестов
                 logger.warning(f"Insufficient balance: ${balance}")
                 return jsonify({'error': f'Insufficient balance: ${balance}'}), 400
+
+            # Проверяем режим позиций
+            if not check_hedge_mode():
+                logger.error("Hedge Mode is not enabled. This bot requires Hedge Mode.")
+                return jsonify({'error': 'Hedge Mode is not enabled. Please enable Hedge Mode in Binance Futures settings.'}), 400
 
             # Устанавливаем рычаг (leverage)
             try:
