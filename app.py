@@ -31,11 +31,12 @@ def home():
     logger.info("Home route accessed")
     return jsonify({'status': 'Server is running'})
 
-# Функция для проверки режима позиций
 def check_hedge_mode():
     try:
-        account_info = client.futures_account()
-        hedge_mode = account_info.get('dualSidePosition', False)
+        # Используем метод futures_get_position_mode() для проверки режима
+        mode_info = client.futures_get_position_mode()
+        logger.info(f"Position mode response: {mode_info}")
+        hedge_mode = mode_info.get('dualSidePosition', False)
         logger.info(f"Hedge Mode enabled: {hedge_mode}")
         return hedge_mode
     except Exception as e:
